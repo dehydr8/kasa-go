@@ -56,28 +56,25 @@ type PlugExporter struct {
 }
 
 func NewPlugExporter(host string, proto protocol.Protocol) (*PlugExporter, error) {
-	var (
-		constLabels = prometheus.Labels{}
-		labelNames  = []string{}
-	)
-
 	info, err := collectDeviceInfo(proto)
 
 	if err != nil {
 		return nil, err
 	}
 
-	constLabels["id"] = info.DeviceId
-	constLabels["alias"] = info.Alias
-	constLabels["model"] = info.Model
-	constLabels["type"] = info.Type
+	var constLabels = prometheus.Labels{
+		"id":    info.DeviceId,
+		"alias": info.Alias,
+		"model": info.Model,
+		"type":  info.Type,
+	}
 
 	e := &PlugExporter{
 		target: host,
 		proto:  proto,
 		metricsPowerLoad: prometheus.NewDesc("kasa_power_load",
 			"Current power in Milliwatts (mW)",
-			labelNames, constLabels),
+			nil, constLabels),
 
 		metricsUp: prometheus.NewDesc("kasa_online",
 			"Device online",
@@ -85,7 +82,7 @@ func NewPlugExporter(host string, proto protocol.Protocol) (*PlugExporter, error
 
 		metricsRssi: prometheus.NewDesc("kasa_rssi",
 			"Wifi received signal strength indicator",
-			labelNames, constLabels),
+			nil, constLabels),
 	}
 
 	return e, nil
@@ -125,7 +122,6 @@ func collectDeviceInfo(proto protocol.Protocol) (*DeviceInfoResult, error) {
 	var response DeviceInfoResponse
 	req := map[string]interface{}{
 		"method": "get_device_info",
-		"params": nil,
 	}
 
 	err := proto.Send(&req, &response)
