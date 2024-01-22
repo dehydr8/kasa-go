@@ -3,14 +3,17 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"flag"
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/dehydr8/kasa-go/device"
 	"github.com/dehydr8/kasa-go/exporter"
 	"github.com/dehydr8/kasa-go/logger"
 	"github.com/dehydr8/kasa-go/model"
+	"github.com/dehydr8/kasa-go/util"
+	"github.com/peterbourgon/ff/v4"
+	"github.com/peterbourgon/ff/v4/ffhelp"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 
@@ -24,8 +27,8 @@ type MetricsServer struct {
 	registryCache *lru.Cache[string, *prometheus.Registry]
 }
 
-func NewMetricsServer(key *rsa.PrivateKey, credentials *model.Credentials) *MetricsServer {
-	cache, err := lru.New[string, *prometheus.Registry](10)
+func NewMetricsServer(key *rsa.PrivateKey, credentials *model.Credentials, cacheMax int) *MetricsServer {
+	cache, err := lru.New[string, *prometheus.Registry](cacheMax)
 
 	if err != nil {
 		panic(err)
@@ -55,23 +58,46 @@ func (s *MetricsServer) getOrCreate(key string, create func() (*prometheus.Regis
 }
 
 func main() {
-	lvl := flag.String("log", "info", "debug, info, warn, error")
-	address := flag.String("address", "", "address to listen on")
-	port := flag.Int("port", 9500, "port to listen on")
-	username := flag.String("username", "", "username for kasa login")
-	password := flag.String("password", "", "password for kasa login")
+	fs := ff.NewFlagSet(fmt.Sprintf("kasa-exporter (rev %s)", util.Revision))
 
-	flag.Parse()
+	var (
+		lvl            = fs.StringEnum('l', "log", "log level: debug, info, warn, error", "info", "debug", "warn", "error")
+		address        = fs.String('a', "address", "", "address to listen on")
+		port           = fs.Int('p', "port", 9500, "port to listen on")
+		username       = fs.StringLong("username", "", "username for kasa login")
+		password       = fs.StringLong("password", "", "password for kasa login")
+		hashedPassword = fs.StringLong("hashed_password", "", "hashed (sha1) password for kasa login")
+		maxRegistries  = fs.IntLong("max_registries", 16, "maximum number of registries to cache")
+	)
 
-	if *username == "" || *password == "" {
-		panic("username and password must be specified")
+	if err := ff.Parse(fs, os.Args[1:],
+		ff.WithEnvVarPrefix("KASA_EXPORTER"),
+		ff.WithConfigFileFlag("config"),
+		ff.WithConfigFileParser(ff.PlainParser),
+	); err != nil {
+		fmt.Printf("%s\n", ffhelp.Flags(fs))
+		fmt.Printf("err=%v\n", err)
+		os.Exit(1)
+	}
+
+	if *username == "" {
+		fmt.Printf("%s\n", ffhelp.Flags(fs))
+		fmt.Printf("err=%v\n", "username must be specified")
+		os.Exit(1)
+	}
+
+	if *password == "" && *hashedPassword == "" {
+		fmt.Printf("%s\n", ffhelp.Flags(fs))
+		fmt.Printf("err=%v\n", "password or hashed_password must be specified")
+		os.Exit(1)
 	}
 
 	logger.SetupLogging(*lvl)
 
 	credentials := model.Credentials{
-		Username: *username,
-		Password: *password,
+		Username:       *username,
+		Password:       *password,
+		HashedPassword: *hashedPassword,
 	}
 
 	logger.Debug("msg", "Generating RSA key")
@@ -82,7 +108,7 @@ func main() {
 		panic(err)
 	}
 
-	server := NewMetricsServer(key, &credentials)
+	server := NewMetricsServer(key, &credentials, *maxRegistries)
 
 	http.HandleFunc("/scrape", server.ScrapeHandler)
 

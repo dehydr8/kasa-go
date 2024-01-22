@@ -388,7 +388,12 @@ func (t *AesTransport) hashCredentials(v2 bool) (string, string) {
 	var pass string
 
 	if v2 {
-		pass = base64.StdEncoding.EncodeToString([]byte(sha1Hash([]byte(t.config.Credentials.Password))))
+		// if we already have the hashed password, use it
+		if t.config.Credentials.HashedPassword != "" {
+			pass = base64.StdEncoding.EncodeToString([]byte(t.config.Credentials.HashedPassword))
+		} else {
+			pass = base64.StdEncoding.EncodeToString([]byte(sha1Hash([]byte(t.config.Credentials.Password))))
+		}
 	} else {
 		pass = base64.StdEncoding.EncodeToString([]byte(t.config.Credentials.Password))
 	}

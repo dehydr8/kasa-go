@@ -5,6 +5,7 @@ go 1.21.0
 require (
 	github.com/go-kit/log v0.2.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
+	github.com/peterbourgon/ff/v4 v4.0.0-alpha.4
 	github.com/prometheus/client_golang v1.18.0
 )
 

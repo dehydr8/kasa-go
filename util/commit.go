@@ -1,12 +1,16 @@
 package util
 
-import "runtime/debug"
+import (
+	"fmt"
+	"runtime/debug"
+)
 
-var Commit = func() string {
+var Revision = func() string {
 	if info, ok := debug.ReadBuildInfo(); ok {
+		fmt.Println(info)
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.revision" {
-				return setting.Value
+				return setting.Value[:7]
 			}
 		}
 	}
