@@ -14,14 +14,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
+	"github.com/dehydr8/kasa-go/logger"
+	"github.com/dehydr8/kasa-go/model"
 )
 
 var _ Protocol = (*AesTransport)(nil)
 
 type AesTransport struct {
-	config       *DeviceConfig
+	config       *model.DeviceConfig
 	loginVersion int
 
 	key     *rsa.PrivateKey
@@ -35,8 +35,6 @@ type AesTransport struct {
 	httpClient *http.Client
 
 	commonHeaders map[string]string
-
-	logger log.Logger
 }
 
 type AesProtoBaseRequest struct {
@@ -98,7 +96,7 @@ type AesPassthroughResponse struct {
 	Result AesPassthroughResponseResult `json:"result"`
 }
 
-func NewAesTransport(key *rsa.PrivateKey, config *DeviceConfig, logger log.Logger) (*AesTransport, error) {
+func NewAesTransport(key *rsa.PrivateKey, config *model.DeviceConfig) (*AesTransport, error) {
 	return &AesTransport{
 		key:    key,
 		config: config,
@@ -114,8 +112,6 @@ func NewAesTransport(key *rsa.PrivateKey, config *DeviceConfig, logger log.Logge
 		},
 		cookies:       make(map[string]string),
 		sessionExpiry: time.Now(),
-
-		logger: logger,
 	}, nil
 }
 
@@ -157,7 +153,7 @@ func (t *AesTransport) Close() error {
 
 func (t *AesTransport) handshake() error {
 
-	level.Debug(t.logger).Log("msg", "performing handshake", "target", t.config.Address)
+	logger.Debug("msg", "performing handshake", "target", t.config.Address)
 
 	encoded, err := x509.MarshalPKIXPublicKey(&t.key.PublicKey)
 
@@ -248,7 +244,7 @@ func (t *AesTransport) handshakeExpired() bool {
 
 func (t *AesTransport) login() error {
 
-	level.Debug(t.logger).Log("msg", "performing login", "target", t.config.Address)
+	logger.Debug("msg", "performing login", "target", t.config.Address)
 
 	req := &AesLoginRequest{
 		AesProtoBaseRequest: AesProtoBaseRequest{
@@ -288,7 +284,7 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	level.Debug(t.logger).Log("msg", "sending request", "request", string(marshalledRequest))
+	logger.Debug("msg", "sending request", "request", string(marshalledRequest))
 
 	encrypted, err := t.session.Encrypt(marshalledRequest)
 
@@ -348,7 +344,7 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	level.Debug(t.logger).Log("msg", "received encrypted response", "encrypted", res.Result.Response)
+	logger.Debug("msg", "received encrypted response", "encrypted", res.Result.Response)
 
 	if res.ErrorCode != 0 {
 		return fmt.Errorf("passthrough failed with error code %d", res.ErrorCode)
@@ -366,7 +362,7 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	level.Debug(t.logger).Log("msg", "decrypted response", "response", string(decrypted))
+	logger.Debug("msg", "decrypted response", "response", string(decrypted))
 
 	return json.Unmarshal(decrypted, response)
 }

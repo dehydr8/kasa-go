@@ -6,13 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
-	"os"
-	"time"
 
+	"github.com/dehydr8/kasa-go/device"
 	"github.com/dehydr8/kasa-go/exporter"
-	"github.com/dehydr8/kasa-go/protocol"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
+	"github.com/dehydr8/kasa-go/logger"
+	"github.com/dehydr8/kasa-go/model"
 
 	lru "github.com/hashicorp/golang-lru/v2"
 
@@ -22,13 +20,11 @@ import (
 
 type MetricsServer struct {
 	key           *rsa.PrivateKey
-	credentials   *protocol.Credentials
+	credentials   *model.Credentials
 	registryCache *lru.Cache[string, *prometheus.Registry]
-
-	logger log.Logger
 }
 
-func NewMetricsServer(key *rsa.PrivateKey, credentials *protocol.Credentials, logger log.Logger) *MetricsServer {
+func NewMetricsServer(key *rsa.PrivateKey, credentials *model.Credentials) *MetricsServer {
 	cache, err := lru.New[string, *prometheus.Registry](10)
 
 	if err != nil {
@@ -39,7 +35,6 @@ func NewMetricsServer(key *rsa.PrivateKey, credentials *protocol.Credentials, lo
 		key:           key,
 		credentials:   credentials,
 		registryCache: cache,
-		logger:        logger,
 	}
 }
 
@@ -72,20 +67,14 @@ func main() {
 		panic("username and password must be specified")
 	}
 
-	var logger log.Logger
-	logger = log.NewLogfmtLogger(os.Stderr)
-	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(*lvl, level.InfoValue())))
-	logger = log.With(logger, "ts", log.TimestampFormat(
-		func() time.Time { return time.Now() },
-		time.DateTime,
-	), "caller", log.DefaultCaller)
+	logger.SetupLogging(*lvl)
 
-	credentials := protocol.Credentials{
+	credentials := model.Credentials{
 		Username: *username,
 		Password: *password,
 	}
 
-	level.Debug(logger).Log("msg", "Generating RSA key")
+	logger.Debug("msg", "Generating RSA key")
 
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 
@@ -93,11 +82,11 @@ func main() {
 		panic(err)
 	}
 
-	server := NewMetricsServer(key, &credentials, logger)
+	server := NewMetricsServer(key, &credentials)
 
 	http.HandleFunc("/scrape", server.ScrapeHandler)
 
-	level.Info(logger).Log("msg", "Starting metrics server", "address", fmt.Sprintf("%s:%d", *address, *port))
+	logger.Info("msg", "Starting metrics server", "address", fmt.Sprintf("%s:%d", *address, *port))
 
 	http.ListenAndServe(fmt.Sprintf("%s:%d", *address, *port), nil)
 }
@@ -111,18 +100,18 @@ func (s *MetricsServer) ScrapeHandler(w http.ResponseWriter, r *http.Request) {
 
 	registry, err := s.getOrCreate(target, func() (*prometheus.Registry, error) {
 
-		level.Debug(s.logger).Log("msg", "Creating new registry for target", "target", target)
+		logger.Debug("msg", "Creating new registry for target", "target", target)
 
-		transport, err := protocol.NewAesTransport(s.key, &protocol.DeviceConfig{
+		device, err := device.NewDevice(s.key, &model.DeviceConfig{
 			Address:     target,
 			Credentials: s.credentials,
-		}, s.logger)
+		})
 
 		if err != nil {
 			return nil, err
 		}
 
-		exporter, err := exporter.NewPlugExporter(target, transport, s.logger)
+		exporter, err := exporter.NewPlugExporter(device)
 
 		if err != nil {
 			return nil, err
@@ -135,7 +124,7 @@ func (s *MetricsServer) ScrapeHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		level.Error(s.logger).Log("msg", "Error creating registry", "err", err)
+		logger.Error("msg", "Error creating registry", "err", err)
 		http.Error(w, err.Error(), 500)
 		return
 	}
