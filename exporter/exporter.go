@@ -6,6 +6,9 @@ import (
 
 	"github.com/dehydr8/kasa-go/protocol"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 )
 
 var _ prometheus.Collector = (*PlugExporter)(nil)
@@ -53,9 +56,11 @@ type PlugExporter struct {
 	metricsUp,
 	metricsRssi,
 	metricsPowerLoad *prometheus.Desc
+
+	logger log.Logger
 }
 
-func NewPlugExporter(host string, proto protocol.Protocol) (*PlugExporter, error) {
+func NewPlugExporter(host string, proto protocol.Protocol, logger log.Logger) (*PlugExporter, error) {
 	info, err := collectDeviceInfo(proto)
 
 	if err != nil {
@@ -83,6 +88,8 @@ func NewPlugExporter(host string, proto protocol.Protocol) (*PlugExporter, error
 		metricsRssi: prometheus.NewDesc("kasa_rssi",
 			"Wifi received signal strength indicator",
 			nil, constLabels),
+
+		logger: logger,
 	}
 
 	return e, nil
@@ -90,12 +97,16 @@ func NewPlugExporter(host string, proto protocol.Protocol) (*PlugExporter, error
 
 func (k *PlugExporter) Collect(ch chan<- prometheus.Metric) {
 
+	level.Debug(k.logger).Log("msg", "collecting metrics", "target", k.target)
+
 	var energyUsageResponse EnergyUsageResponse
 
 	if err := k.proto.Send(&map[string]interface{}{
 		"method": "get_energy_usage",
 	}, &energyUsageResponse); err == nil && energyUsageResponse.ErrorCode == 0 {
 		ch <- prometheus.MustNewConstMetric(k.metricsPowerLoad, prometheus.GaugeValue, float64(energyUsageResponse.Result.CurrentPower))
+	} else {
+		level.Debug(k.logger).Log("msg", "error getting energy usage", "err", err, "code", energyUsageResponse.ErrorCode)
 	}
 
 	var deviceInfoResponse DeviceInfoResponse
@@ -111,6 +122,8 @@ func (k *PlugExporter) Collect(ch chan<- prometheus.Metric) {
 		}
 
 		ch <- prometheus.MustNewConstMetric(k.metricsRssi, prometheus.GaugeValue, float64(deviceInfoResponse.Result.Rssi))
+	} else {
+		level.Debug(k.logger).Log("msg", "error getting device info", "err", err, "code", deviceInfoResponse.ErrorCode)
 	}
 }
 
@@ -127,21 +140,21 @@ func collectDeviceInfo(proto protocol.Protocol) (*DeviceInfoResult, error) {
 	err := proto.Send(&req, &response)
 
 	if err != nil {
-		fmt.Println(err)
+		return nil, err
 	}
 
 	if response.ErrorCode != 0 {
 		return nil, fmt.Errorf("error code: %d", response.ErrorCode)
 	}
 
-	// decode nickname
+	// try decoding nickname
 	nickname, err := base64.StdEncoding.DecodeString(response.Result.Alias)
 
 	if err == nil {
 		response.Result.Alias = string(nickname)
 	}
 
-	// decode ssid
+	// try decoding ssid
 	ssid, err := base64.StdEncoding.DecodeString(response.Result.SSID)
 
 	if err == nil {

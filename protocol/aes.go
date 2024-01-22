@@ -13,6 +13,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 )
 
 var _ Protocol = (*AesTransport)(nil)
@@ -32,6 +35,8 @@ type AesTransport struct {
 	httpClient *http.Client
 
 	commonHeaders map[string]string
+
+	logger log.Logger
 }
 
 type AesProtoBaseRequest struct {
@@ -93,9 +98,7 @@ type AesPassthroughResponse struct {
 	Result AesPassthroughResponseResult `json:"result"`
 }
 
-func NewAesTransport(key *rsa.PrivateKey, config *DeviceConfig) (*AesTransport, error) {
-	// key, err := rsa.GenerateKey(rand.Reader, 1024)
-
+func NewAesTransport(key *rsa.PrivateKey, config *DeviceConfig, logger log.Logger) (*AesTransport, error) {
 	return &AesTransport{
 		key:    key,
 		config: config,
@@ -111,6 +114,8 @@ func NewAesTransport(key *rsa.PrivateKey, config *DeviceConfig) (*AesTransport, 
 		},
 		cookies:       make(map[string]string),
 		sessionExpiry: time.Now(),
+
+		logger: logger,
 	}, nil
 }
 
@@ -151,6 +156,9 @@ func (t *AesTransport) Close() error {
 }
 
 func (t *AesTransport) handshake() error {
+
+	level.Debug(t.logger).Log("msg", "performing handshake", "target", t.config.Address)
+
 	encoded, err := x509.MarshalPKIXPublicKey(&t.key.PublicKey)
 
 	if err != nil {
@@ -177,8 +185,6 @@ func (t *AesTransport) handshake() error {
 	if err != nil {
 		return err
 	}
-
-	// fmt.Println(string(marshalled))
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/app", t.config.Address), bytes.NewBuffer(marshalled))
 
@@ -220,8 +226,6 @@ func (t *AesTransport) handshake() error {
 		return fmt.Errorf("handshake failed with error code %d", response.ErrorCode)
 	}
 
-	// key := response.Result.Key
-
 	for _, c := range res.Cookies() {
 		t.cookies[c.Name] = c.Value
 	}
@@ -243,6 +247,9 @@ func (t *AesTransport) handshakeExpired() bool {
 }
 
 func (t *AesTransport) login() error {
+
+	level.Debug(t.logger).Log("msg", "performing login", "target", t.config.Address)
+
 	req := &AesLoginRequest{
 		AesProtoBaseRequest: AesProtoBaseRequest{
 			Method: "login_device",
@@ -269,12 +276,11 @@ func (t *AesTransport) login() error {
 }
 
 func (t *AesTransport) securePassthrough(request interface{}, response interface{}) error {
+
 	url := fmt.Sprintf("http://%s/app", t.config.Address)
 	if t.loginToken != "" {
 		url = fmt.Sprintf("%s?token=%s", url, t.loginToken)
 	}
-
-	// fmt.Println(url)
 
 	marshalledRequest, err := json.Marshal(request)
 
@@ -282,7 +288,7 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	// fmt.Println(string(marshalledRequest))
+	level.Debug(t.logger).Log("msg", "sending request", "request", string(marshalledRequest))
 
 	encrypted, err := t.session.Encrypt(marshalledRequest)
 
@@ -303,8 +309,6 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	// fmt.Println(string(marshalled))
-
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(marshalled))
 
 	if err != nil {
@@ -316,7 +320,6 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 	}
 
 	for k, v := range t.cookies {
-		// fmt.Println(k, v)
 		req.AddCookie(&http.Cookie{
 			Name:  k,
 			Value: v,
@@ -337,8 +340,6 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	// fmt.Println(string(body))
-
 	var res AesPassthroughResponse
 
 	err = json.Unmarshal(body, &res)
@@ -346,6 +347,8 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 	if err != nil {
 		return err
 	}
+
+	level.Debug(t.logger).Log("msg", "received encrypted response", "encrypted", res.Result.Response)
 
 	if res.ErrorCode != 0 {
 		return fmt.Errorf("passthrough failed with error code %d", res.ErrorCode)
@@ -363,7 +366,7 @@ func (t *AesTransport) securePassthrough(request interface{}, response interface
 		return err
 	}
 
-	// fmt.Println(string(decrypted))
+	level.Debug(t.logger).Log("msg", "decrypted response", "response", string(decrypted))
 
 	return json.Unmarshal(decrypted, response)
 }
