@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dehydr8/kasa-go/logger"
@@ -35,6 +36,8 @@ type AesTransport struct {
 	httpClient *http.Client
 
 	commonHeaders map[string]string
+
+	sendLock sync.Mutex
 }
 
 type AesProtoBaseRequest struct {
@@ -116,6 +119,9 @@ func NewAesTransport(key *rsa.PrivateKey, config *model.DeviceConfig) (*AesTrans
 }
 
 func (t *AesTransport) Send(request, response interface{}) error {
+	t.sendLock.Lock()
+	defer t.sendLock.Unlock()
+
 	if !t.handshakeDone || t.handshakeExpired() {
 		err := t.handshake()
 
@@ -272,6 +278,9 @@ func (t *AesTransport) login() error {
 }
 
 func (t *AesTransport) securePassthrough(request interface{}, response interface{}) error {
+	if t.session == nil {
+		return fmt.Errorf("session not initialized")
+	}
 
 	url := fmt.Sprintf("http://%s/app", t.config.Address)
 	if t.loginToken != "" {
